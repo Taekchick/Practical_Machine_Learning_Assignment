@@ -1,0 +1,138 @@
+---
+title: "Practical Machine Learning Assignment"
+output: html_document
+date: "Tuesday, May 19, 2015"
+---
+
+Executive Summary
+=================
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this report, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+The goal of this report is to predict the manner in which the participants did the exercise; using the "classe" variable in the training set. Out of 160 variables, we will use 53 variables to predict with. We will look at decision tree model, random forest model and find out the accuracy and out of sample error rates. For detailed information, please see the sections below.
+
+
+Exploratory Data Analysis
+=========================
+Some initial setup:
+
+```{r}
+library(caret)
+library(randomForest)
+library(rpart)
+
+url1 <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+url2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+file1 <- "./data/pml-training.csv"
+file2  <- "./data/pml-testing.csv"
+if (!file.exists("./data")) { dir.create("./data") }
+if (!file.exists(file1)) { download.file(url1, destfile=file1) }
+if (!file.exists(file2)) { download.file(url2, destfile=file2) }
+
+set.seed(10101)
+```
+
+Load the data:
+``` {r}
+trainData <- read.csv("./data/pml-training.csv", na.strings = c("NA",""))
+```
+
+Clean up the data:
+There are 160 columns/predictors in the original train data. But many of these have missing values. Let's first remove the predictors that have NA values [100 of them]. Then remove other predictors that are not helpful in predicting the "classe" variable. [Another 7]. With just these two simple process, we can reduce the number of predictors to 53.
+
+``` {r}
+missingData <- sapply(trainData, function (x) any(is.na(x)))
+usefulData <- subset(trainData[, which(missingData == FALSE)], select=-c(1:7))
+#Removed Predictors from 1:7 are X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, num_window
+
+dim(usefulData)
+names(usefulData)
+
+```
+
+Train and Predict
+=================
+Create data partition:
+Using caret's createDataPartition function, split the train data 70/30 with Classe as the outcome variable. By this split, we can later use the 30% of the data to predict our model performance.
+
+``` {r}
+inTraining <- createDataPartition(usefulData$classe, p=0.7, list=FALSE)
+training <- usefulData[inTraining,]
+testing <- usefulData[-inTraining,]
+
+```
+
+Using the split training data, let's first apply to Decision Tree model - rpart
+This will also be used to find the top most important variables used in this model for later use.
+``` {r}
+model2 <- rpart(classe ~ ., data=training, method="class")
+imp <- varImp(model2)
+ordImp <- rownames(imp)[order(imp$Overall, decreasing=TRUE)]
+#Top 10 are:
+#[1] "roll_belt"            "pitch_forearm"        "magnet_dumbbell_z"    "yaw_belt"            
+#[5] "roll_forearm"         "pitch_belt"           "magnet_dumbbell_y"    "accel_dumbbell_y"    
+#[9] "accel_belt_z"         "accel_forearm_x"    
+
+pred2 <- predict(model2, testing, type="class")
+table(pred2, testing$classe)
+```
+
+Since we have 50+ predictors and 19K+ cases to consider, and the accuracy is the most important, we will try the Random Forest model.  
+Here, train function with rf method was used as well as the randomForest function to compare the difference in accuracy. 
+In the train function, we used 4-folds cross validation (to save time) and smaller number of predictors (top 10). Then save the model so that we don't have to run it again. 
+
+``` {r}
+#model0 <- randomForest(classe ~ ., data=training, importance=TRUE)
+#saveRDS(model0, "randomForestSaved.rds") 
+model0 <- readRDS("randomForestSaved.rds")
+ordImp0 <- varImp(model0)
+
+pred0 <- predict(model0, testing)
+confusionMatrix(testing$classe, pred0)
+# Accuracy : 0.9947 
+
+#train method = rf
+#setting the cv number to 4 and cutting down the number of predictors to top 10 (using rpart varImp results)
+usefulData1 <- subset(usefulData, select=c(roll_belt, pitch_forearm, magnet_dumbbell_z, yaw_belt, roll_forearm, pitch_belt, magnet_dumbbell_y, accel_dumbbell_y, accel_belt_z, accel_forearm_x, classe))
+
+inTraining1 <- createDataPartition(usefulData1$classe, p=0.7, list=FALSE)
+training1 <- usefulData1[inTraining1,]
+testing1 <- usefulData1[-inTraining1,]
+
+ctrl1 <- trainControl(method="cv", number=4)
+#model1 <- train(classe~., data=training1, method="rf", trControl=ctrl1, verbose = FALSE )
+#saveRDS(model1, "rf4Saved.rds")
+model1 <- readRDS("rf4Saved.rds")
+```
+
+
+Let's test out the latest model on the test data.
+
+```{r}
+pred1 <- predict(model1, testing)
+confusionMatrix(testing$classe, pred1)
+# Accuracy : 0.9966  
+```
+
+Conclusion
+==========
+Just by using the top 10 important variables in train using rf method, with 4-folds cross validation, we are able to get the accuracy 99.7% with the estimated error rate less than 1%.
+
+
+``` {r, echo=FALSE}
+# Submission information
+testData <- read.csv("./data/pml-testing.csv", na.strings = "NA")
+result <- predict(model0, testData)
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+#pml_write_files(result)
+
+```
+
+
